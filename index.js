@@ -1,6 +1,8 @@
 "use strict";
 
 var error = require("./error");
+var fs = require('fs');
+var mime = require('mime');
 var Util = require("./util");
 var Url = require("url");
 
@@ -636,7 +638,8 @@ var Client = module.exports = function(config) {
     this.httpSend = function(msg, block, callback) {
         var self = this;
         var method = block.method.toLowerCase();
-        var hasBody = ("head|get|delete".indexOf(method) === -1);
+        var hasFileBody = block.hasFileBody;
+        var hasBody = !hasFileBody && ("head|get|delete".indexOf(method) === -1);
         var format = hasBody && this.constants.requestFormat
             ? this.constants.requestFormat
             : "query";
@@ -646,7 +649,7 @@ var Client = module.exports = function(config) {
 
         var path = url;
         var protocol = this.config.protocol || this.constants.protocol || "http";
-        var host = this.config.host || this.constants.host;
+        var host = block.host || this.config.host || this.constants.host;
         var port = this.config.port || this.constants.port || (protocol == "https" ? 443 : 80);
 
         var proxyUrl;
@@ -678,6 +681,12 @@ var Client = module.exports = function(config) {
             "host": host,
             "content-length": "0"
         };
+        if (block.hasFileBody) {
+            var filePath = msg.filePath;
+            var stat = fs.statSync(filePath);
+            headers["content-length"] = stat.size;
+            headers["content-type"] = mime.lookup(msg.name);
+        }
         if (hasBody) {
             if (format == "json")
                 query = JSON.stringify(query);
@@ -774,8 +783,9 @@ var Client = module.exports = function(config) {
             });
         });
 
-        if (this.config.timeout) {
-            req.setTimeout(this.config.timeout);
+        var timeout = (block.timeout !== undefined) ? block.timeout : this.config.timeout;
+        if (timeout) {
+            req.setTimeout(timeout);
         }
 
         req.on("error", function(e) {
@@ -802,6 +812,12 @@ var Client = module.exports = function(config) {
                 console.log("REQUEST BODY: " + query + "\n");
             req.write(query + "\n");
         }
-        req.end();
+
+        if (block.hasFileBody) {
+          var stream = fs.createReadStream(msg.filePath);
+          stream.pipe(req);
+        } else {
+          req.end();
+        }
     };
 }).call(Client.prototype);
